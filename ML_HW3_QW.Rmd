@@ -1,0 +1,232 @@
+# Model Selection
+
+# Question 1.1
+
+- The sample subset of this dataset should not include missing values, nulls, or empty columns. In subset selection, I would start from a simple null model where the predicted heart_attack is the mean value of all past records (i.e. beta equals zero). Then, incrementally update the fit to include more betas (coefficients) of explanatory variables while controlling for model deviance associated with a cost function. Among all regularization paths, I would prioritize using Lasso regression to find the "best" lambda that minimizes deviance, and only consider other regressionss when there is a strong reason to do so.
+
+- When selecting a training subset from the above dataset, I would consider conducting cross validation (CV) to split the data into K folds, repeatedly fit models using only (k-1)/k of the original data, and test their performance on the left-out subset in terms of OSS R^2. Alternatively, I would choose a larger portion of the data as training set and a smaller portion of the data as test set (e.g. 80% observations as training set and the rest 20% as test set in terms of in-sample R^2). The choice of a balanced distribution between training and test for the treated observations will not be prioritized, as the limited amount of data obtained should be better utilized through training and fitting a model. 
+
+```{r}
+# Import dataset as csv file
+heart <- read.csv("heart.csv")
+head(heart)
+
+# Print the number of NA values in each column
+for (i in 1:20){
+  print(sum(is.na(heart[,i])))
+}
+```
+
+```{r}
+# Exclude the three columns with the most NA values
+heart <- heart[,-c(7,11,15)]
+head(heart)
+
+# Again, print the number of NA values in each column
+for (i in 1:17){
+  print(sum(is.na(heart[,i])))
+}
+```
+
+```{r}
+# Then, omit the rows that contain NA values
+heart <- na.omit(heart)
+head(heart)
+```
+
+# Question 1.2
+
+```{r}
+# Randomly split the above dataset into test and training sets using 80% observations as training set
+sample <- sample(c(TRUE, FALSE), nrow(heart), replace=TRUE, prob=c(0.8,0.2))
+train <- heart[sample, ]
+test <- heart[!sample, ]
+
+# View dimensions of training/test set
+# Confirm that the percentage/ratio is correct after splitting
+dim(train)
+dim(test)
+
+# View first few rows of training/test set
+head(data.frame(train))
+head(data.frame(test))
+```
+
+```{r}
+# Fit a simple linear regression model (full model) to predict dependent variable
+trained_fit <- lm(heart_attack ~ ., data = train)
+summary(trained_fit)
+```
+
+Interpretation of the model:
+
+There are 17 independent variables and 1 dependent variable: heart_attack in the regression model. The first column in R output shows a list of estimated coefficients of those variables, such as past_pain, density, age etc. Positive coefficients indicate positive relationship between x and y, vice versa for negative ones. For example, the coefficient of weight is 0.089081, meaning that for every additional unit of increase in weight, the probability of heart attack increases by 0.089. Note that the intercept does not have actual meanings, as it is unlikely to have all x variables equal to 0.
+
+```{r}
+# Predict the heart_attack in test set using the fitted model
+predict <- predict(trained_fit, test)
+
+# Test the fitted model against the test set
+df <- data.frame(cbind(predict, test$heart_attack))
+colnames(df) <- c("predicted values by trained model", "actual values in test set")
+df  ## A comparison between fitted & actual results
+```
+
+```{r}
+# Obtain the R^2 for predictions of the test data set
+sum1 <- sum((predict - test$heart_attack)^2)
+sum2 <- sum((test$heart_attack - mean(train$heart_attack))^2)
+
+OOS_R_sqr <- 1- sum1/sum2
+OOS_R_sqr
+```
+
+# Question 2
+
+Cross-validation is an out-of-sample (OOS) experiment which estimates how well a fitted model can predict data that it has not seen before (i.e. model performance wrt new data). The general steps of a K-fold CV are as follows: 1) Shuffle all the data so that the observations are in a random order; 2) Split the full dataset into k subsets called "folds"; 3) Fit a model using only (k-1)/k of data; 4) Cycle through k CV iterations with a simple fold left-out, and record R^2 on the left-out subset. 
+
+This process is repeated to ensure that each observation is left-out for validation, lowering the sampling variance of CV model selection. In sum, the goal of cross-validation is to choose the best model for prediction, where OOS R^2 (instead of IS R^2) is used to evaluate the performance of all candidate models.
+
+
+Problems associated with a cross-validation approach include: 
+
+a. Time consuming: when estimation is not instant, fitting k times can become unfeasible even K is in 5-10;
+b. Unstable: Doing CV on many different samples may lead to large variability on the model chosen.
+
+# Question 3
+
+```{r}
+# Load R package to implement K-fold cross-validation
+library(caret)
+```
+
+```{r}
+# Set seed to generate a reproducible random sampling (optional)
+set.seed(1)
+
+# Specify the cross-validation method and the value of K equals to 8
+train_control <- trainControl(method = "cv", number = 8)
+
+# Fit a regression model and use k-fold CV to evaluate performance, using only the training set from question 1!
+model <- train(heart_attack ~., data = train, method = "lm", trControl = train_control)
+
+# View summary of k-fold CV
+print(model) ## R^2 from the 8-fold CV is 0.8638634
+
+# View predictions for each fold
+model$resample
+```
+
+```{r}
+# Compare with the previous R^2 from question 1
+OOS_R_sqr ## OOS R-squared without CV is 0.9371868.
+
+# [Note that the following results are the same as summary(trained_fit) in question 1, which is not the print we want]
+summary(model)$adj.r.squared ## Adjusted R-squared: 0.935229
+summary(trained_fit)$adj.r.squared ## Adjusted R-squared: 0.935229
+```
+
+We observe that the mean R^2 from the 8-fold cross-validation is smaller than the R^2 from question 1, both using the same dataset of train subset. The former is the average of some ("pseudo") out-of-sample R^2, while the latter is a true OOS R^2. The comparison shows that in this specific case, even the full model (in question 1) gives a relatively high R^2. Therefore, we don't see any significant increment from using cross-validation (in question 3). Rather, the model without CV seems to perform better in this example. 
+
+# Question 4
+
+Lasso regression is one of the regularization paths which add a penalty ("cost") to deviance whenever a new coefficient/beta is added to the null model. In making decisions about variable selection, we aim to minimize deviance plus a cost function by choosing the "best" λ and corresponding beta(s). Lasso regression considers the absolute value of betas when calculating the cost function, and is seen as the baseline model selection tool. Other regularized regressions calculate the cost function using different formulas of beta. 
+
+Lasso regression works by starting with a big λ so big that the penalization is heavy enough to make the estimated beta equal zero. It then follows the sequence from the largest to the smallest λ, updating an optimal set of betas to keep minimizing deviance plus cost function. For each λ chosen, the path algorithm finds a particular set of betas, which correspond to one candidate model. After enumerating all λs and candidate models, we choose the one with the "best" predictive performance defined via deviance. The overall mechanism starts with a null model and serves as a better version of forward stepwise selection. 
+
+Pros: The estimated betas change smoothly along the path. Each update of betas is fast and easy; also, the choice of model is stable, since the differences between samples won't affect the optimal λ too much.
+
+Cons: In using Lasso for cross-validation, the selection of coefficients are different when applying a different number of "folds". Thus, there is no coherent answer of which estimates are nonzero and important.
+
+# Question 5.1
+
+```{r}
+# Use again the training sets from question 1:
+x <- as.matrix(train[,1:16])
+y <- as.matrix(train$heart_attack)
+
+data.frame(head(x))
+```
+
+```{r}
+# Use glmnet library for lasso CV
+library(glmnet)
+
+# Define penalty factor (optional due to same as default settings in glmnet function)
+# factor <- c(rep(1, ncol(train)))
+
+# Run CV selection with Lasso penalty
+cv_reg <- cv.glmnet(x, y, alpha = 1)  ## alpha = 1 indicating Lasso regression
+
+# Obtain model coefficients given best as biggest λ with avg OOS deviance no more than 1 st.d. from the minimum
+coef(cv_reg) 
+## coef() by default returns betas with 1se lambda
+```
+
+- Model with lambda.1se (4 variables selected): 
+
+heart_attack = -3.49532618 + 0.09271868 * chest_dim + 0.12277120 * abdom_dim + 0.05858356 * hip_dim + 0.03865205 * thigh_dim
+
+
+```{r}
+# Obtain lambda_min & lambda_1se values
+lambda_min <- cv_reg$lambda.min
+lambda_1se <- cv_reg$lambda.1se
+
+lambda_min
+lambda_1se
+```
+
+```{r}
+# Obtain model coefficients given best λ with minimum avg OOS deviance
+best_model <- glmnet(x, y, alpha = 1, lambda = lambda_min)
+coef(best_model)
+```
+
+- Model with lambda.min (7 variables selected): 
+
+heart_attack = -7.79628549 -0.03009675 * height + 0.02329567 * neck_dim + 0.11135667 * chest_dim + 0.12622735 * abdom_dim + 0.06554961 * hip_dim + 0.06615254 * thigh_dim + 0.03153747 * biceps_dim
+
+
+```{r}
+par(mfrow=c(1,2))
+plot(cv_reg) ## Plot of MSE by lambda value
+plot(cv_reg$glmnet.fit,"lambda") ## Lasso path plots
+```
+
+- Among the two models, I would choose the one with lambda_1se, because it has more simplicity than the model with lambda_min. Since cross-validation is not a perfect assessment of OOS performance, a model that is closer to the null model, i.e. a model with less coefficients/betas, is preferred.
+
+# Question 5.2
+
+Compare model outputs from questions one, three, and five:
+
+```{r}
+# Model output from q1: Using 80% observations of raw dataset for training (withou CV)
+summary(trained_fit)
+OOS_R_sqr
+```
+
+- Q1 fits a full model to predict dependent variable, considering all possible variables x. The model has good performance when testing against the test set, since it has a high OOS R-squared in addition to a high IS R-squared.
+
+
+```{r}
+# Model output from q3: Estimating 8-fold CV using exactly the same train set from q1
+print(model)
+```
+
+- Q3 uses cross-validation to fit the full model, using the same dataset as q1 uses. Its OOS R-squared value is satisfactory, though not as high as the true OOS R^2 of q1 model.
+
+
+```{r}
+# Model output from q5: Estimating Lasso CV (lambda_1se) with again the same train set
+coef(cv_reg) 
+```
+
+- Q5 fits a CV Lasso regression to predict y using a "cut model" instead of "full model". By choosing an appropriate lambda, we select only a few explanatory variables with "best" coefficients that help minimize deviance.
+
+# Question 6
+
+Due to problems with the cross-validation approach, an alternative when choosing lambda is information criteria. Among all ICs, AIC is calculated as AIC = IS Deviance + 2 * df ("degree of freedom" refers to the number of coefficients in fitted model), which approximates OOS Deviance. In selection, a model is recommended if it has the smallest AIC. 
+
+However, the problem with AIC is that it tends to overfit in terms of big data. AICc (corrected AIC) is thus introduced to minimize deviance without adding a huge number of parameters. For big n/df, AICc is preferred over AIC. When time is limited, AICc is also preferred as it is fast and stable. It also works nicely in logistic regression, or for any GLM.
+
